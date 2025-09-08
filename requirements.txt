@@ -1,8 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 langchain
-langchain_community
+langchain-community
 langchain-core
 groq
 python-dotenv
