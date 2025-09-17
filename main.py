@@ -1,177 +1,150 @@
 import os
-from typing import List, Dict
+from typing import List, Dict, Literal, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from groq import Groq
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from groq import Groq
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# -------- Config --------
+GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
 
-if not GROQ_API_KEY:
-    print("No API key found for Groq. Please set the GROQ_API_KEY environment variable.")
+# Comma-separated origins env support. Fallback to specific prod + localhost.
+ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "")
+if ALLOWED_ORIGINS_ENV:
+    ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
+else:
+    ALLOWED_ORIGINS = [
+        "https://sabrang.jklu.edu.in",
+        "http://localhost:3000",
+        "https://localhost:3000",
+    ]
 
-app = FastAPI()
+MODEL_NAME = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "512"))
+TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
+
+# -------- App --------
+app = FastAPI(title="Sabrang Assistant API", version="1.0.0")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,     # be explicit in prod
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-client = None
-if GROQ_API_KEY:
-    client = Groq(api_key=GROQ_API_KEY)
+# -------- Groq Client --------
+client: Optional[Groq] = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+if not GROQ_API_KEY:
+    print("[WARN] GROQ_API_KEY not set. /chat/ will return 503 until configured.")
+
+# -------- Data Models --------
+Role = Literal["user", "assistant", "system"]
 
 class UserInput(BaseModel):
-    message: str
-    role: str = "user"
-    conversation_id: str
+    message: str = Field(..., min_length=1)
+    role: Role = "user"
+    conversation_id: str = Field(..., min_length=3)
 
 class Conversation:
-    def __init__(self):
+    def __init__(self) -> None:
         self.messages: List[Dict[str, str]] = [
-    {
-        "role": "system",
-        "content": (
-            "You are Sabrang Assistant, the official AI helper for SABRANG 2025 - JK Lakshmipat University's premier annual cultural and technical fest. "
-            "You provide accurate, helpful information about the festival. Always include:\n"
-            "- Event details, categories, dates, and timings\n"
-            "- Registration process, fees, and on-spot/online options\n"
-            "- Competition rules, rounds, and judgment criteria\n"
-            "- Workshop schedules and interactive sessions\n"
-            "- Pro-show, concerts, and special attractions\n"
-            "- Campus location, directions, and accommodation details\n"
-            "- Contact details of organizing committee members\n"
-            "- Sponsorship and partnership information\n"
-            "- Festival highlights and theme\n"
-            "- Committees and teams working behind the fest\n\n"
-            
-            "🎉 About SABRANG 2025:\n"
-            "Theme: *Noorvana* – symbolizing light, positivity, and new beginnings. SABRANG brings together creativity, culture, technology, and fun.\n"
-            "It is a 3-day extravaganza of music, dance, gaming, art, and innovation.\n\n"
-            
-            "📅 Registration:\n"
-            "- One-time fest registration covers all 3 days.\n"
-            "- Each participant can join up to 3 events.\n"
-            "- Both online (website) and on-spot registrations are available.\n"
-            "- Fest passes are mandatory even for non-competitors.\n"
-            "- Accommodation (paid) and transport are available for outstation participants.\n"
-            "- Online payment via website; offline payment via cash or online.\n\n"
-            
-            "🎭 Flagship & Cultural Events:\n"
-            "- Panache (Rampwalk)\n"
-            "- Echoes of Noor (Solo Singing)\n"
-            "- Band Jam\n"
-            "- Step Up (Solo Dance)\n"
-            "- Dance Battle (Group Dance)\n"
-            "- Versevaad (Rap Battle)\n"
-            "- Sutradhar (Theatre/Drama)\n"
-            "- In Conversation With (Talk Series)\n\n"
-            
-            "🎨 Creative Arts:\n"
-            "- Focus (Photography)\n"
-            "- Art Relay\n"
-            "- Clay Modelling\n\n"
-            
-            "🎮 Gaming & Fun:\n"
-            "- Valorant Tournament\n"
-            "- BGMI Tournament\n"
-            "- Free Fire Tournament\n"
-            "- Bidding Before Wicket (Cricket Auction)\n"
-            "- Seal the Deal (Finance Trading Simulation)\n"
-            "- Courtroom (Murder Mystery)\n"
-            "- Dumb Show (Acting Game)\n"
-            "- Robosoccer (Special Event)\n\n"
-            
-            "⭐ Attractions:\n"
-            "- Pro-shows and concerts\n"
-            "- Workshops, panel discussions, and competitions\n"
-            "- Food stalls, art displays, and live performances\n\n"
-            
-            "📍 Location:\n"
-            "JK Lakshmipat University, Jaipur – accessible via major routes in Rajasthan.\n\n"
-            
-            "☎️ Key Contacts:\n"
-            "- Organizing Head: Diya Garg (+91 72968 59397)\n"
-            "- Registration Core: Jayash Gahlot (+91 83062 74199), Ayushi Kabra (+91 93523 06947)\n"
-            "- Official Website: https://sabrang.jklu.edu.in\n\n"
-            
-            "👥 Committees:\n"
-            "- Registration, Cultural, Technical, Stage & Venue, Media, Hospitality, Internal Arrangements,\n"
-            "  Decor, Sponsorship & Promotion, Photography, Social Media, Prizes & Certificates,\n"
-            "  Transportation, and Discipline.\n\n"
-            
-            "💡 Tone & Role:\n"
-            "Be friendly, enthusiastic, and factual. Encourage participation and highlight the uniqueness of SABRANG 2025. "
-            "If users ask about unrelated topics, gently redirect to SABRANG with suggestions for events, competitions, or activities."
-        ),
-    }
-]
-
+            {
+                "role": "system",
+                "content": (
+                    "You are Sabrang Assistant, the official AI helper for SABRANG 2025 - JK Lakshmipat "
+                    "University's premier annual cultural and technical fest. Provide accurate, helpful, "
+                    "concise information. You can cover: events, categories, dates, timings; registration "
+                    "process/fees; rules/rounds/judgement criteria; workshops; pro-shows; campus/directions/"
+                    "accommodation; contacts; sponsorship; highlights/theme; committees.\n\n"
+                    "Theme: Noorvana – light, positivity, new beginnings. 3-day extravaganza of music, "
+                    "dance, gaming, art, innovation.\n\n"
+                    "Key contacts:\n"
+                    "- Organizing Head: Diya Garg (+91 72968 59397)\n"
+                    "- Registration Core: Jayash Gahlot (+91 83062 74199), Ayushi Kabra (+91 93523 06947)\n"
+                    "- Official Website: https://sabrang.jklu.edu.in\n\n"
+                    "Be friendly, enthusiastic, factual. Redirect unrelated queries back to Sabrang."
+                ),
+            }
+        ]
         self.active: bool = True
+        self.max_history: int = 30  # cap growth
+
+    def add(self, role: Role, content: str) -> None:
+        self.messages.append({"role": role, "content": content})
+        # Keep last N messages + system
+        if len(self.messages) > self.max_history + 1:
+            # preserve first system message
+            system = self.messages[0]
+            self.messages = [system] + self.messages[-self.max_history:]
 
 conversations: Dict[str, Conversation] = {}
 
+def get_or_create_conversation(conversation_id: str) -> Conversation:
+    convo = conversations.get(conversation_id)
+    if not convo:
+        convo = Conversation()
+        conversations[conversation_id] = convo
+    return convo
+
+# -------- Groq Call --------
 def query_groq_api(conversation: Conversation) -> str:
-    if not client:
-        raise HTTPException(status_code=503, detail="Groq API client not initialized. API key missing.")
-    
+    if client is None:
+        raise HTTPException(status_code=503, detail="Groq API client not initialized (missing GROQ_API_KEY).")
     try:
         completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",  # ✅ corrected
+            model=MODEL_NAME,
             messages=conversation.messages,
-            temperature=1,
-            max_tokens=512,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
             top_p=1,
-            stream=False  # easier for first test
+            stream=False,
         )
-        # Groq SDK returns message objects; use dot-access
         content = completion.choices[0].message.content
-        if not content:
-            raise HTTPException(status_code=500, detail="Empty response from Groq API")
-        return content
-
+        if not content or not content.strip():
+            raise HTTPException(status_code=500, detail="Empty response from Groq API.")
+        return content.strip()
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error with Groq API: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error with Groq API: {e}")
 
-def get_or_create_conversation(conversation_id: str) -> Conversation:
-    if conversation_id not in conversations:
-        conversations[conversation_id] = Conversation()
-    return conversations[conversation_id]
+# -------- Routes --------
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "model": MODEL_NAME,
+        "has_api_key": bool(GROQ_API_KEY),
+        "allowed_origins": ALLOWED_ORIGINS,
+    }
 
 @app.post("/chat/")
-async def chat(input: UserInput):
+def chat(input: UserInput):
     conversation = get_or_create_conversation(input.conversation_id)
-
     if not conversation.active:
-        raise HTTPException(
-            status_code=400,
-            detail="The chat session has ended. Please start a new session."
-        )
-    try:
-        # Add user message
-        conversation.messages.append({
-            "role": input.role,
-            "content": input.message
-        })
+        raise HTTPException(status_code=400, detail="Chat session ended. Please start a new session.")
 
-        # Query Groq API
-        response = query_groq_api(conversation)
+    # Add user message
+    conversation.add(role=input.role, content=input.message)
 
-        # Add assistant message
-        conversation.messages.append({
-            "role": "assistant",
-            "content": response
-        })
+    # Get assistant reply
+    reply = query_groq_api(conversation)
 
-        return {
-            "response": response,
-            "conversation_id": input.conversation_id
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Add assistant message to history
+    conversation.add(role="assistant", content=reply)
 
+    return {
+        "response": reply,
+        "conversation_id": input.conversation_id,
+    }
+
+# -------- Local Dev Entry (optional) --------
+if __name__ == "__main__":
+    import uvicorn
+    # 0.0.0.0 for Railway/containers; adjust port as needed
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
