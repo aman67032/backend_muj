@@ -11,7 +11,7 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
-    raise ValueError("API key for Groq is missing. Please set the GROQ_API_KEY in the .env file.")
+    print("No API key found for Groq. Please set the GROQ_API_KEY environment variable.")
 
 app = FastAPI()
 app.add_middleware(
@@ -22,7 +22,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = Groq(api_key=GROQ_API_KEY)
+client = None
+if GROQ_API_KEY:
+    client = Groq(api_key=GROQ_API_KEY)
 
 class UserInput(BaseModel):
     message: str
@@ -48,6 +50,9 @@ class Conversation:
 conversations: Dict[str, Conversation] = {}
 
 def query_groq_api(conversation: Conversation) -> str:
+    if not client:
+        raise HTTPException(status_code=503, detail="Groq API client not initialized. API key missing.")
+    
     try:
         completion = client.chat.completions.create(
             model="llama-3.1-8b-instant",  # ✅ corrected
